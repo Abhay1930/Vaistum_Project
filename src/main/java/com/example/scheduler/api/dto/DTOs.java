@@ -11,7 +11,7 @@ public final class DTOs {
     private DTOs() {}
 
     public record CreateAvailabilityRuleRequest(
-            @NotNull Integer dayOfWeek,
+            @NotNull @Min(1) @Max(7) Integer dayOfWeek,
             @NotNull LocalTime startTime,
             @NotNull LocalTime endTime,
             @NotNull @Min(5) @Max(240) Integer slotMinutes,
