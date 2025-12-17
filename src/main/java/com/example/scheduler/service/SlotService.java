@@ -76,13 +76,21 @@ public class SlotService {
         int pageSize = Math.max(1, Math.min(limit, 50));
         Instant rangeFrom = (from == null ? Instant.now() : from);
         Instant rangeTo = (to == null ? rangeFrom.plus(Duration.ofDays(30)) : to);
-        var page = slotRepo.findOpenSlotsInRange(interviewerId, SlotStatus.OPEN, rangeFrom, rangeTo, PageRequest.of(0, pageSize));
-        List<DTOs.SlotResponse> items = page.stream()
+        List<GeneratedSlot> slots;
+        long[] decoded = CursorUtil.decode(cursor);
+        if (decoded == null) {
+            slots = slotRepo.findOpenSlotsInRange(interviewerId, SlotStatus.OPEN, rangeFrom, rangeTo, PageRequest.of(0, pageSize));
+        } else {
+            Instant startAt = Instant.ofEpochMilli(decoded[0]);
+            long lastId = decoded[1];
+            slots = slotRepo.findAfterCursor(interviewerId, SlotStatus.OPEN, startAt, lastId, rangeTo, PageRequest.of(0, pageSize));
+        }
+        List<DTOs.SlotResponse> items = slots.stream()
                 .map(s -> new DTOs.SlotResponse(s.getId(), s.getStartAt(), s.getEndAt(), s.getStatus().name()))
                 .toList();
         String nextCursor = null;
         if (!items.isEmpty()) {
-            var last = page.get(page.size() - 1);
+            var last = slots.get(slots.size() - 1);
             nextCursor = CursorUtil.encode(last.getStartAt().toEpochMilli(), last.getId());
         }
         return new DTOs.PageResponse<>(items, nextCursor);

@@ -7,6 +7,7 @@ import com.example.scheduler.core.NotFoundException;
 import com.example.scheduler.domain.*;
 import com.example.scheduler.repository.*;
 import com.example.scheduler.util.TimeUtils;
+import com.example.scheduler.util.HashUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,23 +23,38 @@ public class BookingService {
     private final GeneratedSlotRepository slotRepo;
     private final WeeklyCapRepository capRepo;
     private final WeeklyCounterRepository counterRepo;
+    private final IdempotencyKeyRepository idemRepo;
 
     public BookingService(BookingRepository bookingRepo,
                           CandidateRepository candidateRepo,
                           InterviewerRepository interviewerRepo,
                           GeneratedSlotRepository slotRepo,
                           WeeklyCapRepository capRepo,
-                          WeeklyCounterRepository counterRepo) {
+                          WeeklyCounterRepository counterRepo,
+                          IdempotencyKeyRepository idemRepo) {
         this.bookingRepo = bookingRepo;
         this.candidateRepo = candidateRepo;
         this.interviewerRepo = interviewerRepo;
         this.slotRepo = slotRepo;
         this.capRepo = capRepo;
         this.counterRepo = counterRepo;
+        this.idemRepo = idemRepo;
     }
 
     @Transactional
     public DTOs.BookingResponse create(DTOs.BookingRequest req) {
+        // idempotency (optional): reject duplicate keys within scope
+        if (req.idempotencyKey() != null && !req.idempotencyKey().isBlank()) {
+            String scope = "booking:create";
+            String hash = HashUtil.sha256(req.idempotencyKey());
+            if (idemRepo.findByScopeAndKeyHash(scope, hash).isPresent()) {
+                throw new ConflictException("duplicate request");
+            }
+            IdempotencyKey key = new IdempotencyKey();
+            key.setScope(scope);
+            key.setKeyHash(hash);
+            idemRepo.save(key);
+        }
         var candidate = candidateRepo.findById(req.candidateId())
                 .orElseThrow(() -> new NotFoundException("candidate not found"));
         var interviewer = interviewerRepo.findById(req.interviewerId())
@@ -91,6 +107,17 @@ public class BookingService {
 
     @Transactional
     public DTOs.BookingResponse reschedule(Long bookingId, DTOs.RescheduleRequest req) {
+        if (req.idempotencyKey() != null && !req.idempotencyKey().isBlank()) {
+            String scope = "booking:reschedule:" + bookingId;
+            String hash = HashUtil.sha256(req.idempotencyKey());
+            if (idemRepo.findByScopeAndKeyHash(scope, hash).isPresent()) {
+                throw new ConflictException("duplicate request");
+            }
+            IdempotencyKey key = new IdempotencyKey();
+            key.setScope(scope);
+            key.setKeyHash(hash);
+            idemRepo.save(key);
+        }
         Booking existing = bookingRepo.findById(bookingId)
                 .orElseThrow(() -> new NotFoundException("booking not found"));
         if (existing.getStatus() != BookingStatus.CONFIRMED) {
@@ -113,7 +140,7 @@ public class BookingService {
         newSlot.setStatus(SlotStatus.CLOSED);
         slotRepo.saveAndFlush(newSlot);
 
-        // cancel old booking and reopen old slot (if still future)
+        // cancel old booking and reopen old slot (if still future). Adjust weekly counters if weeks differ
         existing.setStatus(BookingStatus.CANCELED);
         existing.setUpdatedAt(Instant.now());
         bookingRepo.save(existing);
@@ -121,6 +148,32 @@ public class BookingService {
         if (oldSlot.getStartAt().isAfter(Instant.now())) {
             oldSlot.setStatus(SlotStatus.OPEN);
             slotRepo.save(oldSlot);
+        }
+
+        LocalDate oldWeek = TimeUtils.weekStartUtc(oldSlot.getStartAt().atOffset(java.time.ZoneOffset.UTC).toLocalDate());
+        LocalDate newWeek = TimeUtils.weekStartUtc(newSlot.getStartAt().atOffset(java.time.ZoneOffset.UTC).toLocalDate());
+        if (!oldWeek.equals(newWeek)) {
+            WeeklyCounter oldCounter = counterRepo.findByInterviewerIdAndWeekStartDate(existing.getInterviewer().getId(), oldWeek)
+                    .orElse(null);
+            if (oldCounter != null && oldCounter.getConfirmedCount() > 0) {
+                oldCounter.setConfirmedCount(oldCounter.getConfirmedCount() - 1);
+                counterRepo.save(oldCounter);
+            }
+            WeeklyCap cap = capRepo.findByInterviewerIdAndWeekStartDate(existing.getInterviewer().getId(), newWeek)
+                    .orElseThrow(() -> new NotFoundException("weekly cap not set for new week"));
+            WeeklyCounter newCounter = counterRepo.findByInterviewerIdAndWeekStartDate(existing.getInterviewer().getId(), newWeek)
+                    .orElseGet(() -> {
+                        WeeklyCounter c = new WeeklyCounter();
+                        c.setInterviewer(existing.getInterviewer());
+                        c.setWeekStartDate(newWeek);
+                        c.setConfirmedCount(0);
+                        return counterRepo.save(c);
+                    });
+            if (newCounter.getConfirmedCount() >= cap.getMaxInterviews()) {
+                throw new ConflictException("weekly cap exceeded for new week");
+            }
+            newCounter.setConfirmedCount(newCounter.getConfirmedCount() + 1);
+            counterRepo.save(newCounter);
         }
 
         // create new booking

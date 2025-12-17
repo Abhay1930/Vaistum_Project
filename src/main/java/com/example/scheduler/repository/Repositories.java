@@ -32,9 +32,16 @@ public interface GeneratedSlotRepository extends JpaRepository<GeneratedSlot, Lo
 
     @Query("select s from GeneratedSlot s where s.interviewer.id = :interviewerId and s.status = :status and s.startAt >= :from and s.startAt < :to order by s.startAt asc, s.id asc")
     List<GeneratedSlot> findOpenSlotsInRange(Long interviewerId, SlotStatus status, Instant from, Instant to, Pageable pageable);
+
+    @Query("select s from GeneratedSlot s where s.interviewer.id = :interviewerId and s.status = :status and ((s.startAt > :startAt) or (s.startAt = :startAt and s.id > :id)) and s.startAt < :to order by s.startAt asc, s.id asc")
+    List<GeneratedSlot> findAfterCursor(Long interviewerId, SlotStatus status, Instant startAt, Long id, Instant to, Pageable pageable);
 }
 
 public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findByCandidateId(Long candidateId);
     Optional<Booking> findBySlotIdAndStatus(Long slotId, BookingStatus status);
+}
+
+public interface IdempotencyKeyRepository extends JpaRepository<IdempotencyKey, Long> {
+    Optional<IdempotencyKey> findByScopeAndKeyHash(String scope, String keyHash);
 }
