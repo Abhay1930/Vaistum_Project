@@ -23,6 +23,10 @@ public interface WeeklyCapRepository extends JpaRepository<WeeklyCap, Long> {
     Optional<WeeklyCap> findByInterviewerIdAndWeekStartDate(Long interviewerId, LocalDate weekStartDate);
 }
 
+public interface WeeklyCounterRepository extends JpaRepository<WeeklyCounter, Long> {
+    Optional<WeeklyCounter> findByInterviewerIdAndWeekStartDate(Long interviewerId, LocalDate weekStartDate);
+}
+
 public interface GeneratedSlotRepository extends JpaRepository<GeneratedSlot, Long> {
     Optional<GeneratedSlot> findByInterviewerIdAndStartAt(Long interviewerId, Instant startAt);
 
