@@ -26,6 +26,16 @@ public class AvailabilityService {
     public DTOs.AvailabilityRuleResponse createRule(Long interviewerId, DTOs.CreateAvailabilityRuleRequest req) {
         Interviewer interviewer = interviewerRepo.findById(interviewerId)
                 .orElseThrow(() -> new NotFoundException("interviewer not found"));
+        if (!req.endTime().isAfter(req.startTime())) {
+            throw new BusinessException("endTime must be after startTime");
+        }
+        long minutes = java.time.Duration.between(req.startTime(), req.endTime()).toMinutes();
+        if (minutes <= 0) {
+            throw new BusinessException("availability window is empty");
+        }
+        if (req.slotMinutes() <= 0 || minutes % req.slotMinutes() != 0) {
+            throw new BusinessException("slotMinutes must evenly divide the availability window");
+        }
         AvailabilityRule rule = new AvailabilityRule();
         rule.setInterviewer(interviewer);
         rule.setDayOfWeek(req.dayOfWeek());
