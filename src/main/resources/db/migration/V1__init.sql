@@ -60,7 +60,7 @@ create table booking (
     constraint fk_booking_interviewer foreign key (interviewer_id) references interviewer(id),
     constraint fk_booking_slot foreign key (slot_id) references generated_slot(id)
 );
-create unique index uq_booking_slot_confirmed on booking(slot_id) where status = 'CONFIRMED';
+create unique index uq_booking_slot on booking(slot_id);
 
 create table weekly_counter (
     id bigint primary key auto_increment,
